@@ -33,6 +33,9 @@ library(ggthemes) # to make your plots look nice
 library(readr)
 library(quanteda)
 library(quanteda.textmodels)
+library(devtools)
+devtools::install_github("matthewjdenny/preText")
+library(preText)
 ```
 
 You may need to install the preText package if you haven't done so yet. For that you will need to run the next code chunk (it is currently set to 'eval=F', which tells R 'do not execute this code chunk').
@@ -73,17 +76,17 @@ Once we have read in these data, we convert it into a different data shape: the 
 
 ```{r}
 tocq_words <- tocq %>%
-  mutate(booknumber = ifelse(gutenberg_id==815, "DiA1", "DiA2")) %>%
-  unnest_tokens(word, text) %>%
-  filter(!is.na(word)) %>%
-  count(booknumber, word, sort = TRUE) %>%
-  ungroup() %>%
-  anti_join(stop_words)
+  mutate(booknumber = ifelse(gutenberg_id==815, "DiA1", "DiA2")) %>%  #将名为“booknumber”的新列添加到数据帧 tocq 中。如果列“gutenberg_id”的值为 815，则“booknumber”的值设置为“DiA1”，否则设置为“DiA2”。
+  unnest_tokens(word, text) %>%  #将文本拆分为单词
+  filter(!is.na(word)) %>% #删除单词列为 NA 的行
+  count(booknumber, word, sort = TRUE) %>% #计算每本书中每个单词的出现次数（由“书号”标识），并按频率降序对结果进行排序
+  ungroup() %>% #删除分组信息
+  anti_join(stop_words)  #删除停用词
 
-tocq_dtm <- tocq_words %>%
-  cast_dtm(booknumber, word, n)
+tocq_dtm <- tocq_words %>%  #从 tocq_words 数据帧创建文档术语矩阵。
+  cast_dtm(booknumber, word, n)  #cast_dtm函数将文本数据转换为文档术语矩阵。它需要指定包含文档的列（在本例中为“书号”）、包含术语（单词）的列以及包含计数（每个单词的频率）的列。
 
-tm::inspect(tocq_dtm)
+tm::inspect(tocq_dtm)  #检查文档术语矩阵的结构和内容
 ```
 
 We see here that the data are now stored as a "DocumentTermMatrix." In this format, the matrix records the term (as equivalent of a column) and the document (as equivalent of row), and the number of times the term appears in the given document. Many terms will not appear in the document, meaning that the matrix will be stored as "sparse," meaning there will be a preponderance of zeroes. Here, since we are looking only at two documents that both come from a single volume set, the sparsity is relatively low (only 27%). In most applications, the sparsity will be a lot higher, approaching 99% or more.
@@ -91,15 +94,15 @@ We see here that the data are now stored as a "DocumentTermMatrix." In this form
 Estimating our topic model is then relatively simple. All we need to do if specify how many topics that we want to search for, and we can also set our seed, which is needed to reproduce the same results each time (as the model is a generative probabilistic one, meaning different random iterations will produce different results).
 
 ```{r}
-tocq_lda <- LDA(tocq_dtm, k = 10, control = list(seed = 1234))
+tocq_lda <- LDA(tocq_dtm, k = 10, control = list(seed = 1234))  #使用 R 中的 topicmodels 包创建 LDA 模型。它采用文档术语矩阵 tocq_dtm 作为输入， k = 10 指定模型应识别 10 个主题，并 control = list(seed = 1234) 设置随机种子以提高可重复性。
 ```
 
 After this we can extract the per-topic-per-word probabilities, called "β" from the model:
 
 ```{r}
-tocq_topics <- tidy(tocq_lda, matrix = "beta")
+tocq_topics <- tidy(tocq_lda, matrix = "beta")  #提取主题项分布，并将其转换为整洁格式。该参数 matrix = "beta" 指定我们对 beta 矩阵感兴趣，它表示每个主题中术语（单词）的分布。
 
-head(tocq_topics, n = 10)
+head(tocq_topics, n = 10) #生成 tocq_topics 的数据帧的前10行，显示每个主题的术语分布
 ```
 
 We now have data stored as one topic-per-term-per-row. The betas listed here represent the probability that the given term belongs to a given topic. So, here, we see that the term "democratic" is most likely to belong to topic 4. Strictly, this probability represents the probability that the term is generated from the topic in question.
@@ -208,10 +211,10 @@ tocq_word_counts
 
 # Cast into DTM format for LDA analysis
 
-tocq_chapters_dtm <- tocq_word_counts %>%
-  cast_dtm(document, word, n)
+tocq_chapters_dtm <- tocq_word_counts %>%  
+  cast_dtm(document, word, n) #转换为文档术语矩阵 （DTM） 格式
 
-tm::inspect(tocq_chapters_dtm)
+tm::inspect(tocq_chapters_dtm) #检查矩阵的结构和内容
 
 ```
 
@@ -241,39 +244,39 @@ Now that we have these topic probabilities, we can see how well our unsupervised
 # First separate the document name into title and chapter
 
 tocq_chapters_gamma <- tocq_chapters_gamma %>%
-  separate(document, c("title", "chapter"), sep = "_", convert = TRUE)
+  separate(document, c("title", "chapter"), sep = "_", convert = TRUE) #使用“_”作为分隔符，将“文档”列分隔为名为“title”和“chapter”的两个单独的列
 
 tocq_chapter_classifications <- tocq_chapters_gamma %>%
   group_by(title, chapter) %>%
   top_n(1, gamma) %>%
-  ungroup()
+  ungroup()  #按“标题”和“章节”对数据进行分组，根据“gamma”值选择每个组中的第一行，然后取消数据分组
 
 tocq_book_topics <- tocq_chapter_classifications %>%
   count(title, topic) %>%
   group_by(title) %>%
   top_n(1, n) %>%
   ungroup() %>%
-  transmute(consensus = title, topic)
+  transmute(consensus = title, topic)  #计算每本书中每个主题的出现次数，为每本书选择最常见的主题，然后创建一个包含“共识”（代表书籍）和“主题”列的新数据帧 tocq_book_topics
 
 tocq_chapter_classifications %>%
   inner_join(tocq_book_topics, by = "topic") %>%
-  filter(title != consensus)
+  filter(title != consensus) #在“主题”列之间 tocq_chapter_classifications 执行内部连接，并 tocq_book_topics基于“主题”列执行内部连接。然后，它过滤“标题”与“共识”不同的行，有效地选择主要主题与书籍整体主要主题不同的章节
 
 # Look document-word pairs were to see which words in each documents were assigned
 # to a given topic
 
-assignments <- augment(tocq_chapters_lda, data = tocq_chapters_dtm)
+assignments <- augment(tocq_chapters_lda, data = tocq_chapters_dtm) #添加有关每个文档-单词对的主题分配的信息
 assignments
 
 assignments <- assignments %>%
-  separate(document, c("title", "chapter"), sep = "_", convert = TRUE) %>%
-  inner_join(tocq_book_topics, by = c(".topic" = "topic"))
+  separate(document, c("title", "chapter"), sep = "_", convert = TRUE) %>% #使用“_”作为分隔符将“文档”列分为“标题”和“章节”列
+  inner_join(tocq_book_topics, by = c(".topic" = "topic")) #根据主题列连接 assignments 数据帧
 
 assignments %>%
-  count(title, consensus, wt = count) %>%
+  count(title, consensus, wt = count) %>%  #计算“标题”和“共识”每个组合的出现次数
   group_by(title) %>%
-  mutate(percent = n / sum(n)) %>%
-  ggplot(aes(consensus, title, fill = percent)) +
+  mutate(percent = n / sum(n)) %>% #按“标题”对数据进行分组，并计算每个组内出现的百分比
+  ggplot(aes(consensus, title, fill = percent)) + #使用 ggplot2 创建图块图，其中 x 轴表示共识书中的主题，y 轴表示标题书中的章节。填充颜色表示分配的百分比
   geom_tile() +
   scale_fill_gradient2(high = "red", label = percent_format()) +
   geom_text(aes(x = consensus, y = title, label = scales::percent(percent))) +
@@ -301,7 +304,7 @@ First we need to reformat our text into a `quanteda` corpus object.
 # load in corpus of Tocequeville text data.
 corp <- corpus(tocq, text_field = "text")
 # use first 10 documents for example
-documents <- corp[sample(1:30000,1000)]
+documents <- corp[sample(1:30000,1000)] 
 # take a look at the document names
 print(names(documents[1:10]))
 
@@ -343,5 +346,219 @@ preText_score_plot(preText_results)
 ## Exercises
 
 1. Choose another book or set of books from Project Gutenberg
+```{r, eval=F}
+text <- gutenberg_download(c(21962, 5694), 
+                            meta_fields = "author")
+```
+
+```{r}
+#step:text-term-matrix
+#Add a new column called "booknumber" to the data frame text. If the value of the column "gutenberg_id" is 28 then the value of "booknumber" is set to "HcV1", otherwise it is set to "HcV1"
+#tokenizing
+#Delete the row with the word column NA
+#Count the number of occurrences of each word in each book (identified by the "book number") and rank the results in descending order of frequency.
+#delate group
+#delate stopwords
+text_words <- text %>%
+  mutate(booknumber = ifelse(gutenberg_id==21962, "HcV1", "HcV2")) %>%
+  unnest_tokens(word, text) %>%
+  filter(!is.na(word)) %>%
+  count(booknumber, word, sort = TRUE) %>%
+  ungroup() %>%
+  anti_join(stop_words)
+
+#step:build term matrix
+text_dtm <- text_words %>% 
+  cast_dtm(booknumber, word, n)  
+#check
+tm::inspect(text_dtm) 
+
+#The LDA model is created using the topicmodels package in R. It uses the document term matrix tocq_dtm as input. It uses the document term matrix text_dtm as input, k = 15 to specify that the model should recognise 15 topics, and control = list(seed = 1234) to set a random seed to improve repeatability.
+text_lda <- LDA(text_dtm, k = 15, control = list(seed = 1234))
+
+# Extract the topic term distributions and convert them to a neat format. The argument matrix = "beta" specifies that we are interested in the beta matrix, which represents the distribution of terms (words) in each topic.
+text_topics <- tidy(text_lda, matrix = "beta")
+
+# Generate the first 15 rows of the data frame for text_topics, showing the distribution of terms for each topic
+head(text_topics, n = 15)
+
+#Here, we see that the term "blood" is most likely to belong to theme 8. Strictly speaking, this probability represents the probability that the term is generated from a related theme.and then we plot it
+text_top_terms <- text_topics %>%
+  group_by(topic) %>%
+  top_n(15, beta) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+
+text_top_terms %>%
+  mutate(term = reorder_within(term, beta, topic)) %>%
+  ggplot(aes(beta, term, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free", ncol = 4) +
+  scale_y_reordered() +
+  theme_tufte(base_family = "Helvetica")
+```
+
+
 2. Run your own topic model on these books, changing the k of topics, and evaluating accuracy.
-3. Validate different pre-processing techniques using `preText` on the new book(s) of your choice. 
+#evaluating
+#Plotting relative word frequencies
+```{r}
+#handle the text,tokenize and stopwords
+tidy_text <- text %>%
+  unnest_tokens(word, text) %>%
+  anti_join(stop_words)
+## Joining with `by = join_by(word)`
+## Count most common words in both
+tidy_text %>%
+  count(word, sort = TRUE)
+
+bookfreq <- tidy_text %>%
+  mutate(booknumber = ifelse(gutenberg_id==21962, "HcV1", "HcV2")) %>%
+  mutate(word = str_extract(word, "[a-z']+")) %>%
+  count(booknumber, word) %>%
+  group_by(booknumber) %>%
+  mutate(proportion = n / sum(n)) %>% 
+  select(-n) %>% 
+  spread(booknumber, proportion)
+
+ggplot(bookfreq, aes(x = HcV1, y = HcV2, color = abs(HcV1 - HcV2))) +
+  geom_abline(color = "gray40", lty = 2) +
+  geom_jitter(alpha = 0.1, size = 2.5, width = 0.3, height = 0.3) +
+  geom_text(aes(label = word), check_overlap = TRUE, vjust = 1.5) +
+  scale_x_log10(labels = percent_format()) +
+  scale_y_log10(labels = percent_format()) +
+  scale_color_gradient(limits = c(0, 0.001), low = "darkslategray4", high = "gray75") +
+  theme_tufte(base_family = "Helvetica") +
+  theme(legend.position="none", 
+        strip.background = element_blank(), 
+        strip.text.x = element_blank()) +
+  labs(x = "Tocqueville HcV 2", y = "Tocqueville HcV 1") +
+  coord_equal()
+```
+#Split into chapter documents
+```{r}
+text <- text %>%
+  filter(!is.na(text))
+
+# Divide into documents, each representing one chapter
+text_chapter <- text %>%
+  mutate(booknumber = ifelse(gutenberg_id==21962, "HcV1", "HcV2")) %>%
+  group_by(booknumber) %>%
+  mutate(chapter = cumsum(str_detect(text, regex("^chapter ", ignore_case = TRUE)))) %>%
+  ungroup() %>%
+  filter(chapter > 0) %>%
+  unite(document, booknumber, chapter)
+
+# Split into words
+text_chapter_word <- text_chapter %>%
+  unnest_tokens(word, text)
+
+# Find document-word counts
+text_word_counts <- text_chapter_word %>%
+  anti_join(stop_words) %>%
+  count(document, word, sort = TRUE) %>%
+  ungroup()
+
+text_word_counts
+```
+```{r}
+# Cast into DTM format for LDA analysis
+
+text_chapters_dtm <- text_word_counts %>%
+  cast_dtm(document, word, n)
+
+tm::inspect(text_chapters_dtm)
+```
+```{r}
+text_chapters_lda <- LDA(text_chapters_dtm, k = 2, control = list(seed = 1234))
+```
+
+```{r}
+text_chapters_gamma <- tidy(text_chapters_lda, matrix = "gamma")
+text_chapters_gamma
+```
+#Examine consensus
+```{r}
+# First separate the document name into title and chapter
+
+text_chapters_gamma <- text_chapters_gamma %>%
+  separate(document, c("title", "chapter"), sep = "_", convert = TRUE)
+
+text_chapter_classifications <- text_chapters_gamma %>%
+  group_by(title, chapter) %>%
+  top_n(1, gamma) %>%
+  ungroup()
+
+text_book_topics <- text_chapter_classifications %>%
+  count(title, topic) %>%
+  group_by(title) %>%
+  top_n(1, n) %>%
+  ungroup() %>%
+  transmute(consensus = title, topic)
+
+text_chapter_classifications %>%
+  inner_join(tocq_book_topics, by = "topic") %>%
+  filter(title != consensus)
+```
+```{r}
+# Look document-word pairs were to see which words in each documents were assigned to a given topic
+
+text_assignments <- augment(text_chapters_lda, data = text_chapters_dtm)
+text_assignments
+```
+```{r}
+text_assignments <- text_assignments %>%
+  separate(document, c("title", "chapter"), sep = "_", convert = TRUE) %>%
+  inner_join(text_book_topics, by = c(".topic" = "topic"))
+
+text_assignments %>%
+  count(title, consensus, wt = count) %>%
+  group_by(title) %>%
+  mutate(percent = n / sum(n)) %>%
+  ggplot(aes(consensus, title, fill = percent)) +
+  geom_tile() +
+  scale_fill_gradient2(high = "red", label = percent_format()) +
+  geom_text(aes(x = consensus, y = title, label = scales::percent(percent))) +
+  theme_tufte(base_family = "Helvetica") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),
+        panel.grid = element_blank()) +
+  labs(x = "Book words assigned to",
+       y = "Book words came from",
+       fill = "% of assignments")
+```
+
+
+
+
+3. Validate different pre-processing techniques using `preText` on the new book(s) of your choice.
+```{r}
+# load in corpus of text data.
+text_corp <- corpus(text, text_field = "text")
+# use first 10 documents for example
+text_documents <- text_corp[sample(1:30000,1000)]
+# take a look at the document names
+print(names(text_documents[1:10]))
+```
+```{r}
+preprocessed_text_documents <- factorial_preprocessing(
+    text_documents,
+    use_ngrams = TRUE,
+    infrequent_term_threshold = 0.2,
+    verbose = FALSE)
+```
+```{r}
+preText_text_results <- preText(
+    preprocessed_text_documents,
+    dataset_name = "HcV text",
+    distance_method = "cosine",
+    num_comparisons = 20,
+    verbose = FALSE)
+```
+
+```{r}
+preText_score_plot(preText_text_results)
+```
+
+
+
+
